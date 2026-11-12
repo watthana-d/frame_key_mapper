@@ -221,6 +221,10 @@ td.key.none{color:var(--muted)}
       <input type="text" id="search" placeholder="Search SKU or key" style="flex:1 1 170px;max-width:270px">
     </div>
     <div class="tablewrap"><table id="out"><thead></thead><tbody></tbody></table></div>
+    <div class="bar" id="missingBar" hidden>
+      <button id="btnMissing">Copy the SKUs with no image</button>
+      <span class="note" id="missingTxt"></span>
+    </div>
     <label class="chip" id="pruneChip" hidden><input type="checkbox" id="cbPrune"> <span id="pruneTxt"></span></label>
     <div class="bar">
       <button class="primary" id="btnXlsx">Finish mapping — export .xlsx</button>
@@ -276,9 +280,13 @@ function readTemplate(file){
       S.wb.SheetNames.forEach(function(n){var o=document.createElement("option");o.value=o.textContent=n;sel.appendChild(o)});
       var gs=S.wb.SheetNames.filter(function(n){return /specific\s*sku/i.test(n)})[0];
       S.cusp=!!gs;
+      S.files=S.files.filter(function(f){return !f.demo});
+      S.jobs=[];S.frameSel={};S.manual={};S.active=0;S.prune=false;
+      lock("p4",false);msg($("expMsg"),"","");$("pruneChip").hidden=true;$("missingBar").hidden=true;
+      if(!S.files.length){$("keyCols").hidden=true;$("selKeyCol").innerHTML="";$("selNameCol").innerHTML=""}
       loadSheet(gs||S.wb.SheetNames[0],S.cusp?2:1);
       readCampaigns();
-      S.files.forEach(autoAssign);renderFiles();
+      S.files.forEach(autoAssign);buildKeys();renderFiles();
       msg($("tplMsg"),S.cusp?"info":"ok",
         S.cusp?"Bulk image campaign template detected. SKUs read from the <b>Specific SKU Group</b> sheet."
               :"Loaded "+esc(file.name)+". Pick the sheet, header row and SKU column below.");
@@ -682,6 +690,8 @@ function render(){
   var tot=S.jobs.reduce(function(m,x){return m+x.result.rows.filter(function(r){return statusOf(x,r)!=="empty"}).length},0);
   $("t4").textContent=S.jobs.length>1?tot+" SKUs mapped across "+S.jobs.length+" groups":used+" of "+j.keys.length+" keys placed";
   var anyEmpty=S.jobs.reduce(function(m,x){return m+counts(x).empty},0);
+  $("missingBar").hidden=anyEmpty===0;
+  $("missingTxt").textContent=anyEmpty?anyEmpty+" SKU"+(anyEmpty>1?"s":"")+" to send to the KAM":"";
   var chip=$("pruneChip");
   if(anyEmpty>0){chip.hidden=false;
     $("pruneTxt").textContent="Remove the "+anyEmpty+" SKU row"+(anyEmpty>1?"s":"")+" with no image from the export";
@@ -969,6 +979,27 @@ $("btnXlsx").addEventListener("click",async function(){
     await deliver(fn,new Blob([arr],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
   }catch(e){msg($("expMsg"),"bad","Export failed: "+esc(e.message))}
 });
+function missingList(){
+  var out=[];
+  S.jobs.forEach(function(j){
+    var miss=j.result.rows.filter(function(r){return statusOf(j,r)==="empty"});
+    if(!miss.length)return;
+    out.push(j.group.name+" — "+j.files.map(function(f){return f.label}).join(", ")+
+      " — no image ("+miss.length+")");
+    miss.forEach(function(r){out.push(r.sku)});
+    out.push("");
+  });
+  return out.join("\n").trim();
+}
+$("btnMissing").addEventListener("click",async function(){
+  var txt=missingList();if(!txt)return;
+  var n=S.jobs.reduce(function(m,j){return m+counts(j).empty},0);
+  try{await navigator.clipboard.writeText(txt);
+    msg($("expMsg"),"ok","Copied "+n+" SKU"+(n>1?"s":"")+" with no image, grouped by period. Paste it into the enquiry to the KAM.")}
+  catch(e){
+    msg($("expMsg"),"warn","Clipboard blocked — here is the list to copy by hand:<br><br>"+
+      "<span style='font-family:var(--mono);font-size:11.5px;white-space:pre-wrap'>"+esc(txt)+"</span>")}
+});
 $("btnCopy").addEventListener("click",async function(){
   var j=job();if(!j)return;
   var txt=j.result.rows.map(function(r){
@@ -979,6 +1010,7 @@ $("btnCopy").addEventListener("click",async function(){
 });
 
 /* ------------ opening example ------------ */
+function demoPeriod(n,t){addPeriod(n,t);S.files.forEach(function(f){f.demo=true})}
 (function demo(){
   var g=[["Shopee Group 1","","Tiktok Group 1"],["SKU","PDP1","SKU"],
     ["197499225424","",""],["197499225349","",""],["706456745136","",""],["706456745129","",""]];
@@ -994,7 +1026,7 @@ $("btnCopy").addEventListener("click",async function(){
     var o=document.createElement("option");o.value=o.textContent=n;sel.appendChild(o)});
   loadSheet("Specific SKU Group",2);readCampaigns();
   msg($("tplMsg"),"warn","Showing an example so you can see the flow. Drop your own template to replace it.");
-  addPeriod("Test_Frame_Setup_20261115.csv",
+  demoPeriod("Test_Frame_Setup_20261115.csv",
     "name,key,last_modified\n197499225349.jpg,Test_Frame_Setup/197499225349.jpg,2026-11-12\n"+
     "197499225424.jpg,Test_Frame_Setup/197499225424.jpg,2026-11-12\n"+
     "706456745129.jpg,Test_Frame_Setup/706456745129.jpg,2026-11-12\n"+
